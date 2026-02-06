@@ -10,41 +10,43 @@ class GIDDataset(Dataset):
         label_dir : folder containing all RGB label images
         target_color: (R, G, B) tuple
         """
-        self.label_dir = label_dir
+        self.samples = []
         self.target_color = np.array(target_color)
         self.transform = transform
 
         label_files = set(os.listdir(label_dir))
 
-        self.image_paths = []
         dropped = 0
 
         for d in image_dirs:
-            for f in os.listdir(d):
-                if f in label_files:
-                    self.image_paths.append(os.path.join(d, f))
+            for img_name in os.listdir(d):
+                if not img_name.lower().endswith(".jpg"):
+                    continue
+
+                label_name = img_name.replace(".jpg", ".png")
+
+                if label_name in label_files:
+                    self.samples.append((
+                        os.path.join(d, img_name),
+                        os.path.join(label_dir, label_name)
+                    ))
                 else:
                     dropped += 1
 
-        self.image_paths.sort()
-
         print(
-            f"[GIDDataset] Loaded {len(self.image_paths)} image-label pairs "
-            f"(dropped {dropped} images without labels)"
+            f"[GIDDataset] Loaded {len(self.samples)} image-label pairs "
+            f"(dropped {dropped})"
         )
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        filename = os.path.basename(img_path)
-        label_path = os.path.join(self.label_dir, filename)
+        img_path, label_path = self.samples[idx]
 
         image = np.array(Image.open(img_path).convert("RGB"))
         label_rgb = np.array(Image.open(label_path).convert("RGB"))
 
-        # Binary mask from RGB label
         mask = np.all(label_rgb == self.target_color, axis=-1).astype(np.float32)
 
         if self.transform:
