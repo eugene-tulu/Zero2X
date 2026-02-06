@@ -10,15 +10,28 @@ class GIDDataset(Dataset):
         label_dir : folder containing all RGB label images
         target_color: (R, G, B) tuple
         """
-        self.image_paths = []
-        for d in image_dirs:
-            for f in os.listdir(d):
-                self.image_paths.append(os.path.join(d, f))
-
-        self.image_paths.sort()
         self.label_dir = label_dir
         self.target_color = np.array(target_color)
         self.transform = transform
+
+        label_files = set(os.listdir(label_dir))
+
+        self.image_paths = []
+        dropped = 0
+
+        for d in image_dirs:
+            for f in os.listdir(d):
+                if f in label_files:
+                    self.image_paths.append(os.path.join(d, f))
+                else:
+                    dropped += 1
+
+        self.image_paths.sort()
+
+        print(
+            f"[GIDDataset] Loaded {len(self.image_paths)} image-label pairs "
+            f"(dropped {dropped} images without labels)"
+        )
 
     def __len__(self):
         return len(self.image_paths)
