@@ -21,7 +21,7 @@ TRACK_COLORS = {
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 LEARNING_RATE = 1e-4
 BATCH_SIZE = 8
-NUM_EPOCHS = 10
+NUM_EPOCHS = 5
 NUM_WORKERS = 4
 PIN_MEMORY = True
 LOAD_MODEL = False
@@ -30,27 +30,53 @@ IMAGE_HEIGHT = 512
 IMAGE_WIDTH = 512
 
 TRAIN_IMAGE_DIRS = [
-    "/media/sf_Downloads/Tulu/Mines/zero2x/初赛赛道3/1",
-    "/media/sf_Downloads/Tulu/Mines/zero2x/初赛赛道3/2",
-    "/media/sf_Downloads/Tulu/Mines/zero2x/初赛赛道3/3",
+    "./data/1",
+    "./data/2",
+    "./data/3",
 ]
 
 VAL_IMAGE_DIRS = [
-    "/media/sf_Downloads/Tulu/Mines/zero2x/初赛赛道3/4",
+    "./data/4",
 ]
 
-LABEL_DIR = "/media/sf_Downloads/Tulu/Mines/zero2x/初赛赛道3/GID-label"
+LABEL_DIR = "./data/GID-label"
+
+
+# ==========================
+# LOSS FUNCTION (BCE + Dice)
+# ==========================
+class BCEDiceLoss(nn.Module):
+    def __init__(self, pos_weight=None):
+        super().__init__()
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    def forward(self, preds, targets):
+        bce = self.bce(preds, targets)
+
+        preds = torch.sigmoid(preds)
+        smooth = 1e-6
+
+        intersection = (preds * targets).sum()
+        dice = (2.0 * intersection + smooth) / (
+            preds.sum() + targets.sum() + smooth
+        )
+        dice_loss = 1 - dice
+
+        return bce + dice_loss
+
 
 # ==========================
 # TRAIN FUNCTION
 # ==========================
 def train_fn(loader, model, optimizer, loss_fn, scaler):
     loop = tqdm(loader)
+    running_loss = 0
+
     for data, targets in loop:
         data = data.to(DEVICE)
         targets = targets.unsqueeze(1).to(DEVICE)
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast("cuda"):
             preds = model(data)
             loss = loss_fn(preds, targets)
 
@@ -59,12 +85,17 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
         scaler.step(optimizer)
         scaler.update()
 
+        running_loss += loss.item()
         loop.set_postfix(loss=loss.item())
+
+    return running_loss / len(loader)
+
 
 # ==========================
 # MAIN
 # ==========================
 def main():
+
     train_transform = A.Compose([
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.1),
@@ -79,7 +110,11 @@ def main():
     ])
 
     model = UNET(in_channels=3, out_channels=1).to(DEVICE)
-    loss_fn = nn.BCEWithLogitsLoss()
+
+    # Handle imbalance (built-up is sparse)
+    pos_weight = torch.tensor([5.0]).to(DEVICE)
+
+    loss_fn = BCEDiceLoss(pos_weight=pos_weight)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     train_loader, val_loader = get_loaders(
@@ -98,17 +133,22 @@ def main():
     if LOAD_MODEL:
         load_checkpoint(torch.load("my_checkpoint.pth.tar"), model)
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
-        train_fn(train_loader, model, optimizer, loss_fn, scaler)
+
+        train_loss = train_fn(train_loader, model, optimizer, loss_fn, scaler)
+
+        print(f"Train Loss: {train_loss:.4f}")
+
         check_accuracy(val_loader, model, DEVICE)
 
         save_checkpoint({
             "state_dict": model.state_dict(),
             "optimizer": optimizer.state_dict(),
         })
+
 
 if __name__ == "__main__":
     main()
