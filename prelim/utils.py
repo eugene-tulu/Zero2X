@@ -3,13 +3,16 @@ import torchvision
 from torch.utils.data import DataLoader
 from dataset import GIDDataset
 
+
 def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
     torch.save(state, filename)
 
+
 def load_checkpoint(checkpoint, model):
     print("=> Loading checkpoint")
     model.load_state_dict(checkpoint["state_dict"])
+
 
 def get_loaders(
     train_image_dirs,
@@ -23,6 +26,7 @@ def get_loaders(
     num_workers=4,
     pin_memory=True,
 ):
+
     train_ds = GIDDataset(
         train_image_dirs,
         train_label_dir,
@@ -55,29 +59,38 @@ def get_loaders(
 
     return train_loader, val_loader
 
+
 def check_accuracy(loader, model, device="cuda"):
     num_correct = 0
     num_pixels = 0
-    dice_score = 0
+
+    total_intersection = 0
+    total_union = 0
+
     model.eval()
 
     with torch.no_grad():
         for x, y in loader:
             x = x.to(device)
             y = y.to(device).unsqueeze(1)
+
             preds = torch.sigmoid(model(x))
             preds = (preds > 0.5).float()
 
             num_correct += (preds == y).sum()
             num_pixels += torch.numel(preds)
 
-            dice_score += (2 * (preds * y).sum()) / (
-                (preds + y).sum() + 1e-8
-            )
+            total_intersection += (preds * y).sum()
+            total_union += (preds + y).sum()
 
-    print(f"Acc: {num_correct/num_pixels*100:.2f}%")
-    print(f"Dice: {dice_score/len(loader):.4f}")
+    accuracy = num_correct / num_pixels * 100
+    dice = (2 * total_intersection) / (total_union + 1e-8)
+
+    print(f"Acc: {accuracy:.2f}%")
+    print(f"Dice: {dice:.4f}")
+
     model.train()
+
 
 def save_predictions_as_imgs(loader, model, folder="saved_images/", device="cuda"):
     model.eval()
